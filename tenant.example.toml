@@ -1,0 +1,43 @@
+# Copy to tenant.toml and adapt to the business. Secrets go in env vars, not here.
+
+# ── Where customers live: the business's own DB, read-only ────────────────
+[customers]
+backend      = "sql"
+url_env      = "TL_CUSTOMERS_DB_URL"   # e.g. postgresql+psycopg://readonly:...@host/shop
+table        = "customers"
+id_column    = "customer_id"
+name_column  = "full_name"
+phone_column = "mobile"
+phone_format = "national"              # e164 | cc_digits | national
+country_code = "91"
+
+# Complex schema? Use queries instead of table/columns. Return id, name, phone; bind :value.
+# by_id_query    = "SELECT c.id, c.name, p.number AS phone FROM customers c JOIN phones p ON p.customer_id = c.id AND p.is_primary WHERE c.id = :value AND c.deleted_at IS NULL"
+# by_phone_query = "SELECT c.id, c.name, p.number AS phone FROM customers c JOIN phones p ON p.customer_id = c.id AND p.is_primary WHERE p.number = :value AND c.deleted_at IS NULL"
+
+# ── How the SMS goes out ──────────────────────────────────────────────────
+[sms]
+provider    = "msg91"                  # console | msg91 | twilio
+authkey_env = "TL_MSG91_AUTHKEY"
+
+[sms.templates]
+approval_link = "YOUR_MSG91_TEMPLATE_ID"
+payment_link  = "YOUR_MSG91_PAYMENT_TEMPLATE_ID"
+registration_link = "YOUR_MSG91_REGISTRATION_TEMPLATE_ID"
+location_link = "YOUR_MSG91_LOCATION_TEMPLATE_ID"
+
+[sms.variables]                        # our name = variable name in the MSG91 template
+link    = "link"
+minutes = "minutes"
+
+# Twilio instead:
+# [sms]
+# provider       = "twilio"
+# account_sid    = "ACxxxxxxxx"
+# auth_token_env = "TL_TWILIO_AUTH_TOKEN"
+# messaging_service_sid = "MGxxxxxxxx"
+
+# ── What it says (must match the DLT template exactly) ───────────────────
+[messages]
+approval_link = "Tap to approve your request: {link} Expires in {minutes} min. If you did not ask for this, ignore this message."
+registration_link = "Tap to confirm your number and finish signing up: {link} Expires in {minutes} min. If you did not ask for this, ignore this message."
