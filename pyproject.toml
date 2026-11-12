@@ -28,7 +28,7 @@ dependencies = [
     "uvicorn>=0.29",
     "SQLAlchemy>=2.0",
     "httpx>=0.27",
-    "mcp>=1.10",
+    "mcp>=1.10,<2",  # 2.x renamed FastMCP; migration tracked in the roadmap
 ]
 
 [project.optional-dependencies]
