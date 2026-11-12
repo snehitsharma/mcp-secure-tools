@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1 — 2026-11-12
+
+### Fixed
+- Pin `mcp<2`: mcp 2.x renamed `FastMCP`, so fresh installs of 0.1.0 failed to import.
+
 ## 0.1.0 — 2026-11-12
 
 First release.

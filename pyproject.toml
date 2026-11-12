@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-secure-tools"
-version = "0.1.0"
+version = "0.1.1"
 description = "MCP tools for voice and chat AI agents where identity never passes through the model."
 readme = "README.md"
 license = "MIT"
