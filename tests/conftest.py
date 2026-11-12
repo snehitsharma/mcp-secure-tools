@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from sessions import SessionService, build_sessions
-
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -12,15 +10,16 @@ from fastapi.testclient import TestClient
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import CallToolResult
 
-from auth.approval_web import create_app
-from auth import AuthService, build_auth
-from shared.config import Settings
-from shared.contracts.auth import Level
-from shared.contracts.customers import Customer
-from shared.contracts.tools import ToolResult, ToolStatus
-from shared.db import Database
-from shared.fakes import FakeClock, FakeSms, InMemoryCustomers
-from shared.gate import ContractViolation, Gate, respond
+from mcp_secure_tools.core.config import Settings
+from mcp_secure_tools.core.contracts.auth import Level
+from mcp_secure_tools.core.contracts.customers import Customer
+from mcp_secure_tools.core.contracts.tools import ToolResult, ToolStatus
+from mcp_secure_tools.core.db import Database
+from mcp_secure_tools.core.fakes import FakeClock, FakeSms, InMemoryCustomers
+from mcp_secure_tools.core.gate import ContractViolation, Gate, respond
+from mcp_secure_tools.core.sessions import SessionService
+from mcp_secure_tools.tools.verification import VerificationService, build_sessions, build_verification
+from mcp_secure_tools.tools.verification.approval_web import create_app
 
 ASHA = Customer(id="c_asha", name="Asha", phone="+919800000001")
 RAVI = Customer(id="c_ravi", name="Ravi", phone="+919800000002")
@@ -74,7 +73,7 @@ class McpClient:
 
 @dataclass
 class Env:
-    auth: AuthService
+    verification: VerificationService
     sms: FakeSms
     clock: FakeClock
     settings: Settings
@@ -84,7 +83,7 @@ class Env:
     sessions: SessionService = field(init=False)
 
     def __post_init__(self) -> None:
-        self.sessions = build_sessions(self.auth)
+        self.sessions = build_sessions(self.verification)
 
     def link_parts(self) -> tuple[str, str]:
         _, a, approval_id, secret = urlparse(self.sms.last_link()).path.split("/")
@@ -98,20 +97,20 @@ class Env:
 
 @pytest.fixture
 def env() -> Iterator[Env]:
-    from auth.mcp_server.server import build_server
+    from mcp_secure_tools.tools.verification.server import build_server
 
     settings = Settings(secret_key="x" * 48, base_url="http://test", db_path=":memory:")
     clock = FakeClock()
     sms = FakeSms()
-    auth = build_auth(settings, InMemoryCustomers([ASHA, RAVI]), sms, clock, db=Database())
-    gate = Gate(auth.tokens)
+    verification = build_verification(settings, InMemoryCustomers([ASHA, RAVI]), sms, clock, db=Database())
+    gate = Gate(verification.tokens)
     with (
-        TestClient(build_server(auth, gate).streamable_http_app(), base_url="http://localhost:8101") as auth_http,
+        TestClient(build_server(verification, gate).streamable_http_app(), base_url="http://localhost:8101") as auth_http,
         TestClient(stand_in_payments_server(gate).streamable_http_app(), base_url="http://localhost:8101") as pay_http,
     ):
         yield Env(
-            auth, sms, clock, settings,
-            web=TestClient(create_app(auth)),
+            verification, sms, clock, settings,
+            web=TestClient(create_app(verification)),
             auth_mcp=McpClient(auth_http),
             payments_mcp=McpClient(pay_http),
         )

@@ -1,43 +1,70 @@
-# auth-service
+# mcp-secure-tools
 
-Caller verification for voice and chat AI agents, as an MCP tool. **Identity never passes through
-the model.**
+[![CI](https://github.com/snehitsharma/mcp-secure-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/snehitsharma/mcp-secure-tools/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Most agents ask the model to collect an OTP and pass it along, so a clever prompt can talk the
-model past the check. Here the model can only *ask* for verification. The proof happens on the
-customer's own phone, and the result is a signed token the model never sees.
+A growing library of [MCP](https://modelcontextprotocol.io) tools for voice and chat AI agents,
+built on one rule: **identity never passes through the model.**
+
+Most agents let the model collect an OTP or a customer id and pass it to the next tool. Then a
+clever prompt can talk the model past the check. Here, the model only picks *which* tool to call
+and *what* to ask for. *Who* is asking travels separately, as a signed token the host attaches
+to every request. The model never sees it, so it can't leak or forge it.
+
+## Tools
+
+| Tool | Status | What it does |
+|---|---|---|
+| [**verification**](src/mcp_secure_tools/tools/verification) | ✅ v0.1 | Raises a caller to "verified" by an SMS approval link tapped on their own phone |
+| payments | 🔜 planned | Payment links that only a verified caller can create |
+| orders | 🔜 planned | Order status, history and cancellation, scoped to the caller |
+
+Every tool shares the same **core**: tokens, levels and the gate.
+
+## See it in 10 seconds
+
+```sh
+pip install -e ".[dev]"
+python examples/end_to_end.py
+```
+
+```
+1. Call starts. Host gives auth the caller ID; the model is not involved.
+   token issued: level 1 for customer c_asha
+2. Model tries to pay.
+   model sees: {"status": "denied", "code": "verification_required", "next_tool": "request_verification"}
+3. Model calls request_verification (no arguments).
+   model sees: pending - An approval link was sent by SMS to the customer's registered number...
+4. Customer opens the link and taps Approve.
+   session is now level 2
+5. Next turn: host attaches the new token, model retries.
+   model sees: ok - Payment link sent for ORD-42.
+```
 
 ## How it works
 
-```
-1. Call starts        system  ── sid + caller ID ──►  auth   number found in customer DB?
-                                                             yes → level 1 token, no → level 0
-                                                             (stored; the model never sees it)
+### Levels
 
-2. Every turn         system attaches the token:  Authorization: Bearer <token>
-                      every tool checks it itself (signature, expiry, level). No call to auth.
-
-3. Needs level 2      tool refuses: "verification_required, next_tool=request_verification"
-                      model calls request_verification  (no arguments: who = inside the token)
-                      auth texts a one-time link to the customer's REGISTERED number
-                      tool replies "pending: ask them to tap Approve"
-
-4. Customer taps      link opens a page → GET shows the button (changes nothing)
-   Approve            POST approves → auth issues a level 2 token, revokes the old one
-
-5. Next turn          system attaches the new token → the sensitive action goes through
-                      level 2 expires after 10 min and drops back to level 1
-```
-
-| Level | Means | How you get it |
+| Level | Meaning | How a session gets it |
 |---|---|---|
-| 0 anonymous | unknown caller | session start |
-| 1 identified | caller ID matches a customer (spoofable, so no sensitive actions) | session start |
-| 2 verified | holds the registered phone | tapped the SMS approval link |
+| 0 anonymous | unknown caller | call starts, number not found |
+| 1 identified | caller ID matches a customer (spoofable: no sensitive actions) | call starts, number found |
+| 2 verified | proved they hold the registered phone | tapped the SMS approval link (lasts 10 min) |
 
-## The token
+### What a tool call looks like
 
-A JWT (HS256): `header.payload.signature`, one string. Payload:
+The model writes the body. The host adds the header. The tool trusts only the header.
+
+```http
+POST /mcp
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzaWQiOiJjYWxsLTEyMyIsInN1YiI6ImNfYXNoYSIsImxldmVsIjoxfQ.CjGAKu5i...
+
+{"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+ "params": {"name": "request_verification", "arguments": {}}}
+```
+
+The token is a JWT, `header.payload.signature`, one string. Its payload:
 
 ```json
 { "sid": "call-123", "sub": "c_asha", "level": 1,
@@ -45,21 +72,14 @@ A JWT (HS256): `header.payload.signature`, one string. Payload:
   "iat": 1794481143, "exp": 1794484743, "session_exp": 1794484743, "jti": "..." }
 ```
 
-Readable by anyone (base64), unforgeable without the secret key. Each token also has a DB row, so
-it can be revoked before it expires; a session has at most one live token.
+Anyone can decode it; nobody can change it without the secret key. Each token also has a DB row,
+so it can be revoked early, and a session has at most one live token.
 
-## Tools
-
-| Tool | Needs | Does |
-|---|---|---|
-| `request_verification` | level 1 | texts an approval link to the customer's registered number |
-| `register_customer` | level 0 | unknown caller: texts a link to their number; known number signs in, new one signs up |
-
-## Protecting your own tool
+### Protecting your own tool: one line
 
 ```python
-from shared.gate import Gate, ContractViolation
-from auth import build_verifier
+from mcp_secure_tools.core.gate import ContractViolation, Gate
+from mcp_secure_tools.core.tokens import build_verifier
 
 gate = Gate(build_verifier(settings, db))
 
@@ -68,49 +88,65 @@ def create_payment(order_ref: str, ctx: Context):
     try:
         claims = gate.require(ctx, min_level=Level.VERIFIED, scopes={"payment:create"})
     except ContractViolation as v:
-        return v.response()          # tells the model to call request_verification
-    ...                              # claims.sub = the verified customer id
+        return v.response()   # tells the model: call request_verification, then retry
+    ...                       # claims.sub is the verified customer id
 ```
 
-## Security details
+## The verification tool
 
-- The approval link's secret is 192 bits; only its SHA-256 hash is stored.
-- An unknown link id and a wrong secret give the same error (no probing).
-- Links are single use, expire in 5 minutes, and a newer link cancels the older one.
-- Rate limits per session and per phone per day (no SMS bombing).
-- Approval page: `no-store`, `no-referrer`, no framing, strict CSP.
-- Indian DLT SMS rules supported (path-only links, exact templates); msg91, Twilio or console.
+| MCP tool | Needs | Does |
+|---|---|---|
+| `request_verification` | level 1 | texts a one-time approval link to the customer's **registered** number |
+| `register_customer` | level 0 | unknown caller: link to their number; a known number signs in, a new one signs up |
+
+- The link's secret is 192 bits; only its SHA-256 hash is stored.
+- Single use, expires in 5 minutes; a newer link cancels the older one.
+- Opening the link (GET) changes nothing, so SMS previews and link scanners can't approve. Only the button (POST) does.
+- Unknown link and wrong secret give the same error, so ids can't be probed.
+- Rate limits per session and per phone per day, so it can't be used to SMS-bomb anyone.
+- Approval page sends `no-store`, `no-referrer`, `X-Frame-Options: DENY` and a strict CSP.
+- SMS through msg91 (India DLT: path-only links, exact templates), Twilio, or the console.
+
+Run it (MCP at `/mcp`, approval page at `/a/...`, one port):
+
+```sh
+export TL_SECRET_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
+python -m mcp_secure_tools.tools.verification      # :8100
+```
+
+Per-business settings (customer DB, SMS provider, message text) go in `tenant.toml`; see
+[`tenant.example.toml`](tenant.example.toml). Without one you get a demo customer
+(+919800000001) and SMS printed to the console.
 
 ## Layout
 
 ```
-auth/
-  core/service.py     the flow: request link → inspect/decide link → level 2 token
-  core/tokens.py      issue / verify / revoke tokens
-  core/policy.py      which level grants which scopes
-  mcp_server/         the two MCP tools                    :8101/mcp
-  approval_web/       the page the SMS link opens          :8100/a/...
-sessions/             host side: start a session from caller ID, current token each turn
-customers/            read customers from the business DB (+ a registry for sign-ups)
-providers/sms/        msg91, twilio, console
-shared/gate.py        the check every tool runs (token → level → scopes)
+src/mcp_secure_tools/
+  core/                  shared by every tool
+    tokens.py            issue / verify / revoke signed tokens
+    gate.py              the check every tool runs first: token → level → scopes
+    policy.py            which level grants which scopes
+    sessions.py          host side: start a session from caller ID, current token each turn
+    customers/           read customers from the business DB (+ registry for sign-ups)
+    contracts/           Pydantic models shared across tools
+  providers/sms/         msg91, twilio, console
+  tools/
+    verification/        request_verification, register_customer, approval page
+examples/                end_to_end.py
+tests/                   core/ and tools/<name>/
 ```
-
-## Run
-
-```sh
-pip install -e .[dev]
-python -m pytest -q
-
-export TL_SECRET_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
-python -m auth.approval_web    # :8100
-python -m auth.mcp_server      # :8101/mcp  (console SMS prints the link)
-```
-
-Per-business config (customer DB, SMS provider, message text) goes in `tenant.toml`; see
-`tenant.example.toml`. Without one: a demo customer (+919800000001) and SMS printed to the console.
 
 ## Roadmap
 
-- HTTP endpoint for the host to start a session (today the host runs `sessions` in-process)
-- Spoken numbers captured by the host, never passed by the model
+- HTTP endpoint for hosts to start a session (today the host runs `core.sessions` in-process)
+- Capture spoken numbers on the host side so the model never passes them
+- payments and orders tools
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). The one rule: never trust identity that came from a tool
+argument.
+
+## License
+
+[MIT](LICENSE)

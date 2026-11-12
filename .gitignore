@@ -4,3 +4,7 @@ __pycache__/
 *.db
 .env
 .venv/
+dist/
+build/
+*.egg-info/
+.ruff_cache/
