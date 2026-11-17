@@ -6,6 +6,7 @@
 
 [![M8ven Score](https://m8ven.ai/badge/mcp/snehitsharma/mcp-secure-tools)](https://m8ven.ai/mcp/snehitsharma/mcp-secure-tools?s=readme)
 
+[![M8ven Score](https://m8ven.ai/badge/mcp/snehitsharma-mcp-secure-tools-1709iu?v=f5efa490cd0961885f4e12d610ffa30c)](https://m8ven.ai/mcp/snehitsharma-mcp-secure-tools-1709iu?s=readme)
 A growing library of [MCP](https://modelcontextprotocol.io) tools for voice and chat AI agents,
 built on one rule: **identity never passes through the model.**
 
