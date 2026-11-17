@@ -4,6 +4,8 @@
 ![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
+[![M8ven Score](https://m8ven.ai/badge/mcp/snehitsharma/mcp-secure-tools)](https://m8ven.ai/mcp/snehitsharma/mcp-secure-tools?s=readme)
+
 A growing library of [MCP](https://modelcontextprotocol.io) tools for voice and chat AI agents,
 built on one rule: **identity never passes through the model.**
 
